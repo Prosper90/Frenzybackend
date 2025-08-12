@@ -11,6 +11,7 @@ const server = http.createServer(app);
 app.use(
   cors({
     origin: [
+      "https://basedfrenzy.com/",
       "https://play.basedfrenzy.com",
       "https://gameverse.basedfrenzy.com/",
       "http://localhost:3000",
@@ -23,6 +24,7 @@ app.use(
 const io = socketIo(server, {
   cors: {
     origin: [
+      "https://basedfrenzy.com/",
       "https://play.basedfrenzy.com",
       "https://gameverse.basedfrenzy.com/",
       "http://localhost:3000",
