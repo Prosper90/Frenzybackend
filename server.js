@@ -10,14 +10,24 @@ const server = http.createServer(app);
 // Configure CORS for both Express and Socket.IO
 app.use(
   cors({
-    origin: ["http://localhost:3000", "http://localhost:5173"], // Add your frontend URLs
+    origin: [
+      "https://play.basedfrenzy.com",
+      "https://gameverse.basedfrenzy.com/",
+      "http://localhost:3000",
+      "http://localhost:5173",
+    ], // Add your frontend URLs
     credentials: true,
   })
 );
 
 const io = socketIo(server, {
   cors: {
-    origin: ["http://localhost:3000", "http://localhost:5173"],
+    origin: [
+      "https://play.basedfrenzy.com",
+      "https://gameverse.basedfrenzy.com/",
+      "http://localhost:3000",
+      "http://localhost:5173",
+    ],
     methods: ["GET", "POST"],
     credentials: true,
   },
