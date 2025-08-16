@@ -41,6 +41,7 @@ app.use(express.json());
 let messages = [];
 let connectedUsers = new Map(); // address -> user info
 let userSockets = new Map(); // socketId -> user address
+let playerInventories = new Map(); // address -> inventory data
 
 // Rate limiting
 const rateLimiter = new Map(); // address -> { messages: number, lastReset: timestamp }
@@ -336,6 +337,253 @@ io.on("connection", (socket) => {
   });
 });
 
+// Game-specific endpoints
+
+// Initialize player inventory if not exists
+const initializePlayerInventory = (address) => {
+  if (!playerInventories.has(address)) {
+    playerInventories.set(address, {
+      items: {},
+      bait: 10,
+      fishingRods: 1,
+      money: 1000
+    });
+  }
+  return playerInventories.get(address);
+};
+
+// Get player inventory
+app.get("/api/inventory/:address", (req, res) => {
+  const { address } = req.params;
+  if (!isValidAddress(address)) {
+    return res.status(400).json({ error: "Invalid address" });
+  }
+  
+  const inventory = initializePlayerInventory(address);
+  res.json(inventory);
+});
+
+// Fishing endpoint
+app.post("/api/fishing/catch", (req, res) => {
+  const { address } = req.body;
+  
+  if (!isValidAddress(address)) {
+    return res.status(400).json({ error: "Invalid address" });
+  }
+  
+  const inventory = initializePlayerInventory(address);
+  
+  // Check if player has bait
+  if (inventory.bait <= 0) {
+    return res.json({ 
+      success: false, 
+      message: "No bait available" 
+    });
+  }
+  
+  // Deduct bait
+  inventory.bait--;
+  
+  // Simulate fishing
+  const random = Math.random();
+  const rodBreakChance = Math.random();
+  
+  // 5% chance of rod breaking
+  const rodBroken = rodBreakChance < 0.05;
+  if (rodBroken) {
+    inventory.fishingRods = Math.max(0, inventory.fishingRods - 1);
+  }
+  
+  let result = { success: false, rodBroken };
+  
+  // 10% chance of catching nothing
+  if (random < 0.1) {
+    result.message = rodBroken ? "Your fishing rod broke!" : "You didn't catch anything...";
+  }
+  // 60% common fish
+  else if (random < 0.7) {
+    const item = {
+      id: 'common-fish',
+      name: 'Common Fish',
+      type: 'common',
+      value: 10,
+      description: 'A regular fish from the volcanic pool'
+    };
+    
+    // Add to inventory
+    if (!inventory.items[item.id]) {
+      inventory.items[item.id] = { item, quantity: 0 };
+    }
+    inventory.items[item.id].quantity++;
+    
+    result = {
+      success: true,
+      item,
+      rodBroken,
+      message: rodBroken ? "You caught a fish but your rod broke!" : "You caught a Common Fish!"
+    };
+  }
+  // 20% rare fish
+  else if (random < 0.9) {
+    const rareTypes = [
+      { id: 'silver-fish', name: 'Silver Fish', value: 50 },
+      { id: 'gold-fish', name: 'Gold Fish', value: 100 }
+    ];
+    const rare = rareTypes[Math.floor(Math.random() * rareTypes.length)];
+    
+    const item = {
+      ...rare,
+      type: 'rare',
+      description: `A shiny ${rare.name.toLowerCase()} from the depths`
+    };
+    
+    // Add to inventory
+    if (!inventory.items[item.id]) {
+      inventory.items[item.id] = { item, quantity: 0 };
+    }
+    inventory.items[item.id].quantity++;
+    
+    result = {
+      success: true,
+      item,
+      rodBroken,
+      message: `Amazing! You caught a ${rare.name}!${rodBroken ? " But your rod broke!" : ""}`
+    };
+  }
+  // 10% epic/legendary
+  else {
+    const epicTypes = [
+      { id: 'diamond-fish', name: 'Diamond Fish', type: 'epic', value: 500 },
+      { id: 'mythril-fish', name: 'Mythril Fish', type: 'legendary', value: 1000 }
+    ];
+    const epic = epicTypes[Math.floor(Math.random() * epicTypes.length)];
+    
+    const item = {
+      ...epic,
+      description: `An extremely rare ${epic.name.toLowerCase()}!`
+    };
+    
+    // Add to inventory
+    if (!inventory.items[item.id]) {
+      inventory.items[item.id] = { item, quantity: 0 };
+    }
+    inventory.items[item.id].quantity++;
+    
+    result = {
+      success: true,
+      item,
+      rodBroken,
+      message: `INCREDIBLE! You caught a ${epic.name}!${rodBroken ? " But your rod broke!" : ""}`
+    };
+  }
+  
+  // Save inventory
+  playerInventories.set(address, inventory);
+  
+  // Emit inventory update if user is connected
+  if (connectedUsers.has(address)) {
+    io.to(address).emit('inventoryUpdate', inventory);
+  }
+  
+  res.json(result);
+});
+
+// Sell items endpoint
+app.post("/api/shop/sell", (req, res) => {
+  const { address, itemId, quantity } = req.body;
+  
+  if (!isValidAddress(address)) {
+    return res.status(400).json({ error: "Invalid address" });
+  }
+  
+  const inventory = initializePlayerInventory(address);
+  
+  if (!inventory.items[itemId] || inventory.items[itemId].quantity < quantity) {
+    return res.json({ success: false, message: "Not enough items" });
+  }
+  
+  const item = inventory.items[itemId].item;
+  const totalValue = item.value * quantity;
+  
+  // Update inventory
+  inventory.items[itemId].quantity -= quantity;
+  if (inventory.items[itemId].quantity <= 0) {
+    delete inventory.items[itemId];
+  }
+  inventory.money += totalValue;
+  
+  // Save inventory
+  playerInventories.set(address, inventory);
+  
+  // Emit inventory update if user is connected
+  if (connectedUsers.has(address)) {
+    io.to(address).emit('inventoryUpdate', inventory);
+  }
+  
+  res.json({ success: true, money: totalValue });
+});
+
+// Buy bait endpoint
+app.post("/api/shop/buy-bait", (req, res) => {
+  const { address, quantity } = req.body;
+  const baitPrice = 5; // $5 per bait
+  
+  if (!isValidAddress(address)) {
+    return res.status(400).json({ error: "Invalid address" });
+  }
+  
+  const inventory = initializePlayerInventory(address);
+  const totalCost = baitPrice * quantity;
+  
+  if (inventory.money < totalCost) {
+    return res.json({ success: false, message: "Not enough money" });
+  }
+  
+  // Update inventory
+  inventory.money -= totalCost;
+  inventory.bait += quantity;
+  
+  // Save inventory
+  playerInventories.set(address, inventory);
+  
+  // Emit inventory update if user is connected
+  if (connectedUsers.has(address)) {
+    io.to(address).emit('inventoryUpdate', inventory);
+  }
+  
+  res.json({ success: true, bait: quantity, money: totalCost });
+});
+
+// Buy fishing rod endpoint
+app.post("/api/shop/buy-rod", (req, res) => {
+  const { address } = req.body;
+  const rodPrice = 100; // $100 per rod
+  
+  if (!isValidAddress(address)) {
+    return res.status(400).json({ error: "Invalid address" });
+  }
+  
+  const inventory = initializePlayerInventory(address);
+  
+  if (inventory.money < rodPrice) {
+    return res.json({ success: false, message: "Not enough money" });
+  }
+  
+  // Update inventory
+  inventory.money -= rodPrice;
+  inventory.fishingRods++;
+  
+  // Save inventory
+  playerInventories.set(address, inventory);
+  
+  // Emit inventory update if user is connected
+  if (connectedUsers.has(address)) {
+    io.to(address).emit('inventoryUpdate', inventory);
+  }
+  
+  res.json({ success: true, rods: 1, money: rodPrice });
+});
+
 // REST API endpoints
 app.get("/api/health", (req, res) => {
   res.json({
@@ -343,6 +591,7 @@ app.get("/api/health", (req, res) => {
     timestamp: Date.now(),
     connectedUsers: connectedUsers.size,
     totalMessages: messages.length,
+    activePlayers: playerInventories.size,
   });
 });
 
@@ -367,7 +616,7 @@ setInterval(() => {
   }
 }, RATE_LIMIT_WINDOW);
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3005;
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
